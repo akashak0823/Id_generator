@@ -63,7 +63,7 @@ export default function EmployeeForm() {
       // append photo if present (field name 'photo')
       if (photoFile) fd.append("photo", photoFile);
 
-      const res = await fetch("http://localhost:4000/api/employees", {
+      const res = await fetch("https://id-backend-yuqp.onrender.com/api/employees", {
         method: "POST",
         body: fd
       });
@@ -145,3 +145,4 @@ export default function EmployeeForm() {
     </div>
   );
 }
+
