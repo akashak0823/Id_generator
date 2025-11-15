@@ -16,7 +16,7 @@ export default function EmployeeList() {
       if (query) params.append("q", query);
       params.append("limit", String(lim));
       params.append("offset", String(off));
-      const res = await fetch(`http://localhost:4000/api/employees?${params.toString()}`);
+      const res = await fetch(`https://id-backend-yuqp.onrender.com/api/employees?${params.toString()}`);
       const data = await res.json();
       if (!data.success) throw new Error(data.error || "Failed to fetch");
       setEmployees(data.employees);
@@ -108,3 +108,4 @@ export default function EmployeeList() {
     </div>
   );
 }
+
