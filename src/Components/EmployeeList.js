@@ -1,6 +1,7 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import "./EmployeeForm.css"; // reuse your existing styles
 
+// change if your server isn't running at localhost:4000
 const API_BASE = process.env.REACT_APP_API_BASE || "https://id-backend-yuqp.onrender.com";
 
 export default function EmployeeList() {
@@ -10,29 +11,37 @@ export default function EmployeeList() {
   const [limit] = useState(50);
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
-  const [rowDeleting, setRowDeleting] = useState({}); // { [employee_id]: true }
-  const [error, setError] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false); // for delete/create/edit actions
 
-  const searchTimeout = useRef(null);
+  // modal/form state
+  const [showForm, setShowForm] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [formData, setFormData] = useState({
+    employee_id: "",
+    first_name: "",
+    last_name: "",
+    position: "",
+    email: "",
+    contact: "",
+    photo_url: "",
+  });
 
   async function fetchList({ query = "", lim = limit, off = 0 } = {}) {
     setLoading(true);
-    setError(null);
     try {
       const params = new URLSearchParams();
       if (query) params.append("q", query);
       params.append("limit", String(lim));
       params.append("offset", String(off));
-      const url = `${API_BASE}/api/employees?${params.toString()}`;
-      const res = await fetch(url, { cache: "no-store" });
+      const res = await fetch(`${API_BASE}/api/employees?${params.toString()}`);
       const data = await res.json();
       if (!data.success) throw new Error(data.error || "Failed to fetch");
-      setEmployees(data.employees || []);
-      setHasMore((data.employees || []).length === lim);
+      setEmployees(data.employees);
+      setHasMore(data.employees.length === lim);
       setOffset(off);
     } catch (err) {
       console.error("fetchList error:", err);
-      setError(err.message || "Failed to fetch employees");
+      alert(err.message || "Failed to fetch employees");
     } finally {
       setLoading(false);
     }
@@ -45,19 +54,7 @@ export default function EmployeeList() {
 
   function onSearch(e) {
     e.preventDefault();
-    // immediate search on form submit
-    if (searchTimeout.current) clearTimeout(searchTimeout.current);
     fetchList({ query: q, off: 0 });
-  }
-
-  // debounced input handler (so typing doesn't call API constantly)
-  function onSearchChange(e) {
-    const v = e.target.value;
-    setQ(v);
-    if (searchTimeout.current) clearTimeout(searchTimeout.current);
-    searchTimeout.current = setTimeout(() => {
-      fetchList({ query: v, off: 0 });
-    }, 300);
   }
 
   function goNext() {
@@ -72,35 +69,103 @@ export default function EmployeeList() {
   async function handleDelete(employee_id) {
     const ok = window.confirm(`Delete employee ${employee_id}? This will remove the record and server-uploaded photo (if any).`);
     if (!ok) return;
-    setRowDeleting(prev => ({ ...prev, [employee_id]: true }));
+    setActionLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/employees/${encodeURIComponent(employee_id)}`, {
         method: "DELETE"
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || "Delete failed");
-      // Remove from UI quickly
-      setEmployees(prev => prev.filter(e => e.employee_id !== employee_id));
-      // If list becomes empty and offset > 0, fetch previous page
-      if (employees.length === 1 && offset > 0) {
-        const prevOff = Math.max(0, offset - limit);
-        fetchList({ query: q, off: prevOff });
-      }
+      // refresh list; keep offset
+      await fetchList({ query: q, off: offset });
+      alert("Deleted successfully");
     } catch (err) {
       console.error("delete error:", err);
       alert(err.message || "Failed to delete");
     } finally {
-      setRowDeleting(prev => {
-        const next = { ...prev };
-        delete next[employee_id];
-        return next;
-      });
+      setActionLoading(false);
     }
   }
 
-  function openCreateForm() {
-    // adjust route if your form is hosted at a different path
-    window.open("/create", "_blank");
+  // Open modal for creating a new employee
+  function openCreateModal() {
+    setIsEditing(false);
+    setFormData({
+      employee_id: "",
+      first_name: "",
+      last_name: "",
+      position: "",
+      email: "",
+      contact: "",
+      photo_url: "",
+    });
+    setShowForm(true);
+  }
+
+  // Open modal for editing an existing employee
+  function openEditModal(emp) {
+    setIsEditing(true);
+    setFormData({
+      employee_id: emp.employee_id || "",
+      first_name: emp.first_name || "",
+      last_name: emp.last_name || "",
+      position: emp.position || "",
+      email: emp.email || "",
+      contact: emp.contact || "",
+      photo_url: emp.photo_url || "",
+    });
+    setShowForm(true);
+  }
+
+  function handleFormChange(e) {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  }
+
+  async function handleFormSubmit(e) {
+    e.preventDefault();
+    // basic validation
+    if (!formData.first_name.trim() || !formData.last_name.trim()) {
+      alert("Please provide first and last name.");
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      let res, data;
+      if (isEditing) {
+        // PUT update
+        res = await fetch(`${API_BASE}/api/employees/${encodeURIComponent(formData.employee_id)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(formData),
+        });
+      } else {
+        // POST create
+        res = await fetch(`${API_BASE}/api/employees`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(formData),
+        });
+      }
+
+      data = await res.json();
+      if (!data.success) throw new Error(data.error || (isEditing ? "Update failed" : "Create failed"));
+
+      // refresh list and close modal
+      await fetchList({ query: q, off: offset });
+      setShowForm(false);
+      alert(isEditing ? "Updated successfully" : "Created successfully");
+    } catch (err) {
+      console.error("form submit error:", err);
+      alert(err.message || "Failed to submit");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  function closeModal() {
+    setShowForm(false);
   }
 
   return (
@@ -110,7 +175,7 @@ export default function EmployeeList() {
           <input
             placeholder="Search name, email, contact or ID"
             value={q}
-            onChange={onSearchChange}
+            onChange={e => setQ(e.target.value)}
             style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: "1px solid #ccc" }}
           />
           <button type="submit" style={{ padding: "8px 12px", borderRadius: 8, background: "#123458", color: "#fff", border: "none" }}>
@@ -122,24 +187,12 @@ export default function EmployeeList() {
           Refresh
         </button>
 
-        <button onClick={openCreateForm} style={{ padding: "8px 12px", borderRadius: 8, background: "#1f9d55", color: "#fff", border: "none" }}>
+        <button onClick={openCreateModal} style={{ padding: "8px 12px", borderRadius: 8, background: "#1f9d55", color: "#fff", border: "none" }}>
           + Add Employee
         </button>
       </div>
 
-      {error && (
-        <div style={{ marginBottom: 12, color: "crimson" }}>
-          {error} — <button onClick={() => fetchList({ query: q, off: offset })}>Retry</button>
-        </div>
-      )}
-
       {loading ? <div>Loading…</div> : null}
-
-      {!loading && employees.length === 0 && (
-        <div style={{ padding: 16, textAlign: "center", color: "#666" }}>
-          No employees found. Try refreshing or add a new employee.
-        </div>
-      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
         {employees.map(emp => (
@@ -172,19 +225,20 @@ export default function EmployeeList() {
 
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <div style={{ color: "#666", fontSize: 13 }}>{new Date(emp.created_at).toLocaleString()}</div>
+
+                <button
+                  onClick={() => openEditModal(emp)}
+                  style={{ padding: "6px 10px", borderRadius: 8, background: "#2b7be3", color: "#fff", border: "none" }}
+                >
+                  Edit
+                </button>
+
                 <button
                   onClick={() => handleDelete(emp.employee_id)}
-                  disabled={!!rowDeleting[emp.employee_id]}
-                  style={{
-                    padding: "6px 10px",
-                    borderRadius: 8,
-                    background: rowDeleting[emp.employee_id] ? "#ccc" : "#e13b3b",
-                    color: "#fff",
-                    border: "none",
-                    cursor: rowDeleting[emp.employee_id] ? "progress" : "pointer"
-                  }}
+                  disabled={actionLoading}
+                  style={{ padding: "6px 10px", borderRadius: 8, background: "#e13b3b", color: "#fff", border: "none" }}
                 >
-                  {rowDeleting[emp.employee_id] ? "Deleting..." : "Delete"}
+                  Delete
                 </button>
               </div>
             </div>
@@ -201,6 +255,96 @@ export default function EmployeeList() {
           Next
         </button>
       </div>
+
+      {/* Inline modal form for create/edit */}
+      {showForm && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "rgba(0,0,0,0.4)",
+            zIndex: 9999,
+          }}
+          onClick={closeModal}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: 720,
+              maxWidth: "95%",
+              borderRadius: 12,
+              background: "#fff",
+              padding: 18,
+              boxShadow: "0 8px 30px rgba(0,0,0,0.2)",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ margin: 0 }}>{isEditing ? "Edit Employee" : "Create Employee"}</h3>
+              <button onClick={closeModal} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 20 }}>×</button>
+            </div>
+
+            <form onSubmit={handleFormSubmit} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div style={{ gridColumn: "1 / 2" }}>
+                <label style={{ display: "block", fontSize: 13, marginBottom: 6 }}>First Name</label>
+                <input name="first_name" value={formData.first_name} onChange={handleFormChange} style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #ddd" }} />
+              </div>
+
+              <div style={{ gridColumn: "2 / 3" }}>
+                <label style={{ display: "block", fontSize: 13, marginBottom: 6 }}>Last Name</label>
+                <input name="last_name" value={formData.last_name} onChange={handleFormChange} style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #ddd" }} />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 13, marginBottom: 6 }}>Position</label>
+                <input name="position" value={formData.position} onChange={handleFormChange} style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #ddd" }} />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 13, marginBottom: 6 }}>Employee ID</label>
+                <input
+                  name="employee_id"
+                  value={formData.employee_id}
+                  onChange={handleFormChange}
+                  readOnly={isEditing} // prevent changing id when editing; remove if backend allows id change
+                  style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #ddd", background: isEditing ? "#f5f6f7" : "white" }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 13, marginBottom: 6 }}>Email</label>
+                <input name="email" value={formData.email} onChange={handleFormChange} style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #ddd" }} />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 13, marginBottom: 6 }}>Contact</label>
+                <input name="contact" value={formData.contact} onChange={handleFormChange} style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #ddd" }} />
+              </div>
+
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={{ display: "block", fontSize: 13, marginBottom: 6 }}>Photo URL</label>
+                <input name="photo_url" value={formData.photo_url} onChange={handleFormChange} style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #ddd" }} />
+                <div style={{ marginTop: 8 }}>
+                  <small style={{ color: "#666" }}>Provide a public image URL, or leave empty. You can store images on your server and save the returned URL here.</small>
+                </div>
+              </div>
+
+              <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 6 }}>
+                <button type="button" onClick={closeModal} style={{ padding: "8px 12px", borderRadius: 8 }}>
+                  Cancel
+                </button>
+                <button type="submit" disabled={actionLoading} style={{ padding: "8px 12px", borderRadius: 8, background: "#123458", color: "#fff", border: "none" }}>
+                  {actionLoading ? (isEditing ? "Saving…" : "Creating…") : (isEditing ? "Save Changes" : "Create")}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
